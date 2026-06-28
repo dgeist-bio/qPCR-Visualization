@@ -1,7 +1,3 @@
-git """
-qPCR Data Loader
-Loads and selects qPCR data from the summarized results file
-"""
 import pandas as pd
 import importlib
 
