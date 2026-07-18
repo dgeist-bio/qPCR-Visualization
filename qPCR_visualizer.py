@@ -7,7 +7,31 @@ Useful for neurodivergent-friendly colormap selection
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import pathlib
+from pathlib import Path
+
+
+def get_output_directory(output_dir=None):
+    """Return the desktop output directory used for qPCR results and plots."""
+    if output_dir is None:
+        output_dir = Path.home() / "Desktop" / "qPCR_Ergebnisse"
+    else:
+        output_dir = Path(output_dir)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def save_figure_to_output(fig, output_filename, output_dir=None):
+    """Save a matplotlib figure to the qPCR output directory and return the path."""
+    target_path = Path(output_filename)
+    if not target_path.is_absolute():
+        target_path = get_output_directory(output_dir) / target_path
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(target_path, dpi=300, bbox_inches='tight')
+    print(f"✓ Saved: {target_path}")
+    plt.close(fig)
+    return target_path
 
 
 def load_results_csv(csv_file):
@@ -15,7 +39,7 @@ def load_results_csv(csv_file):
     return pd.read_csv(csv_file)
 
 
-def plot_delta_ct_with_colormap(delta_ct_df, colormap='viridis', output_filename=None):
+def plot_delta_ct_with_colormap(delta_ct_df, colormap='viridis', output_filename=None, sample_name=None):
     """
     Create bar plot for ΔCt values with specified colormap.
     
@@ -45,8 +69,10 @@ def plot_delta_ct_with_colormap(delta_ct_df, colormap='viridis', output_filename
     # Formatting
     ax.set_xlabel('Sample', fontsize=12, fontweight='bold')
     ax.set_ylabel('ΔCt (Target - Reference)', fontsize=12, fontweight='bold')
-    ax.set_title(f'qPCR Delta Ct Values ({colormap.capitalize()} Colormap)', 
-                 fontsize=14, fontweight='bold')
+    title = f'qPCR Delta Ct Values ({colormap.capitalize()} Colormap)'
+    if sample_name:
+        title = f'{sample_name} - {title}'
+    ax.set_title(title, fontsize=14, fontweight='bold')
     ax.set_xticks(x_pos)
     if 'Sample_Name' in delta_ct_df.columns:
         ax.set_xticklabels(delta_ct_df['Sample_Name'], rotation=45, ha='right')
@@ -56,12 +82,10 @@ def plot_delta_ct_with_colormap(delta_ct_df, colormap='viridis', output_filename
     ax.axhline(y=0, color='red', linestyle='--', linewidth=2, alpha=0.5)
     
     plt.tight_layout()
-    plt.savefig(output_filename, dpi=300, bbox_inches='tight')
-    print(f"✓ Saved: {output_filename}")
-    plt.close()
+    save_figure_to_output(fig, output_filename)
 
 
-def plot_fold_change_with_colormap(fold_change_df, colormap='viridis', output_filename=None):
+def plot_fold_change_with_colormap(fold_change_df, colormap='viridis', output_filename=None, sample_name=None):
     """
     Create bar plot for Fold Change values with specified colormap.
     
@@ -91,8 +115,10 @@ def plot_fold_change_with_colormap(fold_change_df, colormap='viridis', output_fi
     # Formatting
     ax.set_xlabel('Sample', fontsize=12, fontweight='bold')
     ax.set_ylabel('Fold Change (2^-ΔΔCt)', fontsize=12, fontweight='bold')
-    ax.set_title(f'qPCR Fold Change Values ({colormap.capitalize()} Colormap)', 
-                 fontsize=14, fontweight='bold')
+    title = f'qPCR Fold Change Values ({colormap.capitalize()} Colormap)'
+    if sample_name:
+        title = f'{sample_name} - {title}'
+    ax.set_title(title, fontsize=14, fontweight='bold')
     ax.set_xticks(x_pos)
     if 'Sample_Name' in fold_change_df.columns:
         ax.set_xticklabels(fold_change_df['Sample_Name'], rotation=45, ha='right')
@@ -103,9 +129,7 @@ def plot_fold_change_with_colormap(fold_change_df, colormap='viridis', output_fi
     ax.legend()
     
     plt.tight_layout()
-    plt.savefig(output_filename, dpi=300, bbox_inches='tight')
-    print(f"✓ Saved: {output_filename}")
-    plt.close()
+    save_figure_to_output(fig, output_filename)
 
 
 def generate_all_colormaps():
@@ -144,7 +168,7 @@ def generate_all_colormaps():
     print("  • cividis - Optimized for colorblind vision (deuteranopia)")
 
 
-def save_combined_publication_quality_plots(delta_ct_df, fold_change_df, output_filename):
+def save_combined_publication_quality_plots(delta_ct_df, fold_change_df, output_filename, sample_name=None):
     """Save a combined publication-quality figure containing delta Ct and fold change plots."""
     fig, axes = plt.subplots(2, 1, figsize=(14, 14), dpi=300, constrained_layout=True)
 
@@ -181,10 +205,11 @@ def save_combined_publication_quality_plots(delta_ct_df, fold_change_df, output_
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
 
-    fig.suptitle('qPCR Publication-Quality Summary', fontsize=22, fontweight='bold')
-    fig.savefig(output_filename, dpi=300, bbox_inches='tight')
-    print(f"✓ Saved: {output_filename}")
-    plt.close(fig)
+    title = 'qPCR Publication-Quality Summary'
+    if sample_name:
+        title = f'{sample_name} - {title}'
+    fig.suptitle(title, fontsize=22, fontweight='bold')
+    save_figure_to_output(fig, output_filename)
 
 
 if __name__ == "__main__":

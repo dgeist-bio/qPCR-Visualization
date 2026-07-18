@@ -20,7 +20,12 @@ from scipy.stats import ttest_ind, f_oneway, mannwhitneyu
 # Import qPCR modules
 from qPCR_data_loader import load_qpcr_data, separate_genes, get_sample_groups
 from qPCR_delta_ct_calculation import calculate_delta_ct, calculate_fold_change
-from qPCR_visualizer import plot_delta_ct_with_colormap, plot_fold_change_with_colormap, save_combined_publication_quality_plots
+from qPCR_visualizer import (
+    plot_delta_ct_with_colormap,
+    plot_fold_change_with_colormap,
+    save_combined_publication_quality_plots,
+    get_output_directory,
+)
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -30,7 +35,7 @@ class qPCRAnalyzerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("qPCR Analysis Suite v1.1.0")
+        self.title("qPCR Analysis Suite v1.2.0")
         self.geometry("1200x900")
 
         # Storage for selected files and data
@@ -40,6 +45,7 @@ class qPCRAnalyzerApp(ctk.CTk):
         self.reference_data = None
         self.delta_ct_data = None
         self.fold_change_data = None
+        self.sample_name_var = ctk.StringVar(value="")
 
         # --- Header ---
         self.header_label = ctk.CTkLabel(
@@ -171,6 +177,23 @@ class qPCRAnalyzerApp(ctk.CTk):
             text_color="gray"
         )
         self.progress_label.pack(anchor="w", pady=(10, 0))
+
+        sample_name_frame = ctk.CTkFrame(control_frame)
+        sample_name_frame.pack(fill="x", pady=(5, 0))
+
+        ctk.CTkLabel(
+            sample_name_frame,
+            text="Sample name for plots:",
+            font=("Arial", 11)
+        ).pack(side="left", padx=(0, 8))
+
+        self.sample_name_entry = ctk.CTkEntry(
+            sample_name_frame,
+            textvariable=self.sample_name_var,
+            width=260,
+            placeholder_text="e.g. Control Sample"
+        )
+        self.sample_name_entry.pack(side="left")
 
         # --- Data Display Notebook (Tabs) ---
         self.tabview = ctk.CTkTabview(self)
@@ -360,7 +383,7 @@ Max Fold Change: {self.fold_change_data['Fold_Change'].max():.3f}
         self.fold_change_text.configure(state="disabled")
 
     def visualize_cycles(self):
-        """Create and display cycle visualization"""
+        """Create cycle visualizations and save them to the desktop output folder."""
         if self.delta_ct_data is None:
             messagebox.showerror("Error", "Please calculate data first")
             return
@@ -368,14 +391,11 @@ Max Fold Change: {self.fold_change_data['Fold_Change'].max():.3f}
         try:
             self.update_status("Generating cycle visualizations...")
 
-            # Clear previous plots
             for widget in self.viz_frame.winfo_children():
                 widget.destroy()
 
-            # Create figure with subplots
             fig = Figure(figsize=(16, 10), dpi=100)
 
-            # Plot 1: Target vs Reference Ct
             ax1 = fig.add_subplot(2, 3, 1)
             sample_labels = [f"S{int(n)}" for n in self.delta_ct_data['Sample_Number']]
             x_pos = np.arange(len(self.delta_ct_data))
@@ -389,7 +409,6 @@ Max Fold Change: {self.fold_change_data['Fold_Change'].max():.3f}
             ax1.legend()
             ax1.grid(axis='y', alpha=0.3)
 
-            # Plot 2: Delta Ct with error bars
             ax2 = fig.add_subplot(2, 3, 2)
             colors = plt.cm.viridis(np.linspace(0, 1, len(self.delta_ct_data)))
             ax2.bar(x_pos, self.delta_ct_data['Delta_Ct'], yerr=self.delta_ct_data['Delta_Ct_STD'],
@@ -402,11 +421,10 @@ Max Fold Change: {self.fold_change_data['Fold_Change'].max():.3f}
             ax2.axhline(y=0, color='red', linestyle='--', linewidth=2, alpha=0.5)
             ax2.grid(axis='y', alpha=0.3)
 
-            # Plot 3: Fold Change with error bars
             ax3 = fig.add_subplot(2, 3, 3)
             if 'Fold_Change' in self.fold_change_data.columns:
                 colors_fc = plt.cm.plasma(np.linspace(0, 1, len(self.fold_change_data)))
-                ax3.bar(x_pos, self.fold_change_data['Fold_Change'], 
+                ax3.bar(x_pos, self.fold_change_data['Fold_Change'],
                        yerr=self.fold_change_data['Fold_Change_STD'],
                        capsize=5, color=colors_fc, edgecolor='black', linewidth=1.5, alpha=0.8)
                 ax3.set_xlabel('Sample')
@@ -418,7 +436,6 @@ Max Fold Change: {self.fold_change_data['Fold_Change'].max():.3f}
                 ax3.legend()
                 ax3.grid(axis='y', alpha=0.3)
 
-            # Plot 4: Scatter plot - Target vs Reference
             ax4 = fig.add_subplot(2, 3, 4)
             scatter = ax4.scatter(self.delta_ct_data['Target_Ct'], self.delta_ct_data['Reference_Ct'],
                                  s=100, alpha=0.6, c=range(len(self.delta_ct_data)), cmap='cool')
@@ -428,7 +445,6 @@ Max Fold Change: {self.fold_change_data['Fold_Change'].max():.3f}
             fig.colorbar(scatter, ax=ax4, label='Sample')
             ax4.grid(True, alpha=0.3)
 
-            # Plot 5: Distribution of Ct values
             ax5 = fig.add_subplot(2, 3, 5)
             ax5.boxplot([self.delta_ct_data['Target_Ct'].dropna(), self.delta_ct_data['Reference_Ct'].dropna()],
                        tick_labels=['Target', 'Reference'])
@@ -436,7 +452,6 @@ Max Fold Change: {self.fold_change_data['Fold_Change'].max():.3f}
             ax5.set_title('Ct Value Distribution')
             ax5.grid(axis='y', alpha=0.3)
 
-            # Plot 6: Delta Ct distribution
             ax6 = fig.add_subplot(2, 3, 6)
             ax6.hist(self.delta_ct_data['Delta_Ct'].dropna(), bins=10, color='#2ECC71', alpha=0.7, edgecolor='black')
             ax6.set_xlabel('ΔCt Value')
@@ -446,12 +461,21 @@ Max Fold Change: {self.fold_change_data['Fold_Change'].max():.3f}
 
             fig.subplots_adjust(hspace=0.75, wspace=0.45, left=0.1, right=0.9, top=0.9, bottom=0.1)
 
-            # Embed in tkinter
-            canvas = FigureCanvasTkAgg(fig, master=self.viz_frame)
-            canvas.draw()
-            canvas.get_tk_widget().pack(fill="both", expand=True)
+            output_folder = get_output_directory()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = output_folder / f"qPCR_CyclePlots_{timestamp}.png"
+            fig.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.close(fig)
 
-            self.update_status("Cycle visualizations complete!")
+            ctk.CTkLabel(
+                self.viz_frame,
+                text=f"Cycle visualizations saved to:\n{output_path}",
+                font=("Arial", 12),
+                wraplength=800,
+                justify="center"
+            ).pack(expand=True)
+
+            self.update_status("Cycle visualizations saved to desktop output folder")
 
         except Exception as e:
             messagebox.showerror("Error", f"Error creating visualization:\n{str(e)}")
@@ -464,10 +488,7 @@ Max Fold Change: {self.fold_change_data['Fold_Change'].max():.3f}
             return
 
         try:
-            # Create output folder
-            output_folder = os.path.join(os.path.expanduser("~"), "Desktop", "qPCR_Ergebnisse")
-            if not os.path.exists(output_folder):
-                os.makedirs(output_folder)
+            output_folder = get_output_directory()
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -490,24 +511,46 @@ Max Fold Change: {self.fold_change_data['Fold_Change'].max():.3f}
                     f.write(stats_report)
                 print(f"✓ Saved: {stats_file}")
 
+            sample_name = self.sample_name_var.get().strip() or None
+
             # Generate publication-quality plots
-            plot_delta_ct_with_colormap(self.delta_ct_data, 'viridis',
-                                       os.path.join(output_folder, f"qPCR_DeltaCt_viridis_{timestamp}.png"))
-            plot_delta_ct_with_colormap(self.delta_ct_data, 'cividis',
-                                       os.path.join(output_folder, f"qPCR_DeltaCt_cividis_{timestamp}.png"))
-            plot_delta_ct_with_colormap(self.delta_ct_data, 'plasma',
-                                       os.path.join(output_folder, f"qPCR_DeltaCt_plasma_{timestamp}.png"))
+            plot_delta_ct_with_colormap(
+                self.delta_ct_data,
+                'viridis',
+                os.path.join(output_folder, f"qPCR_DeltaCt_viridis_{timestamp}.png"),
+                sample_name=sample_name,
+            )
+            plot_delta_ct_with_colormap(
+                self.delta_ct_data,
+                'cividis',
+                os.path.join(output_folder, f"qPCR_DeltaCt_cividis_{timestamp}.png"),
+                sample_name=sample_name,
+            )
+            plot_delta_ct_with_colormap(
+                self.delta_ct_data,
+                'plasma',
+                os.path.join(output_folder, f"qPCR_DeltaCt_plasma_{timestamp}.png"),
+                sample_name=sample_name,
+            )
 
             if self.fold_change_data is not None:
-                plot_fold_change_with_colormap(self.fold_change_data, 'plasma',
-                                              os.path.join(output_folder, f"qPCR_FoldChange_plasma_{timestamp}.png"))
-                plot_fold_change_with_colormap(self.fold_change_data, 'viridis',
-                                              os.path.join(output_folder, f"qPCR_FoldChange_viridis_{timestamp}.png"))
+                plot_fold_change_with_colormap(
+                    self.fold_change_data,
+                    'plasma',
+                    os.path.join(output_folder, f"qPCR_FoldChange_plasma_{timestamp}.png"),
+                    sample_name=sample_name,
+                )
+                plot_fold_change_with_colormap(
+                    self.fold_change_data,
+                    'viridis',
+                    os.path.join(output_folder, f"qPCR_FoldChange_viridis_{timestamp}.png"),
+                    sample_name=sample_name,
+                )
 
             combined_png = os.path.join(output_folder, f"qPCR_Publication_Quality_AllPlots_{timestamp}.png")
-            save_combined_publication_quality_plots(self.delta_ct_data, self.fold_change_data, combined_png)
+            save_combined_publication_quality_plots(self.delta_ct_data, self.fold_change_data, combined_png, sample_name=sample_name)
             combined_pdf = os.path.join(output_folder, f"qPCR_Publication_Quality_AllPlots_{timestamp}.pdf")
-            save_combined_publication_quality_plots(self.delta_ct_data, self.fold_change_data, combined_pdf)
+            save_combined_publication_quality_plots(self.delta_ct_data, self.fold_change_data, combined_pdf, sample_name=sample_name)
 
             self.update_status(f"Results exported to {output_folder}")
             messagebox.showinfo("Success", f"Results exported successfully!\n\nFolder: {output_folder}")
@@ -655,7 +698,7 @@ NOTES:
             self.update_status("Error during statistical analysis")
 
     def visualize_advanced(self):
-        """Create advanced visualizations with multiple styles"""
+        """Create advanced visualizations and save them to the desktop output folder."""
         if self.delta_ct_data is None:
             messagebox.showerror("Error", "Please calculate data first")
             return
@@ -663,17 +706,14 @@ NOTES:
         try:
             self.update_status("Generating advanced visualizations...")
 
-            # Clear previous plots
             for widget in self.advanced_viz_frame.winfo_children():
                 widget.destroy()
 
-            # Create figure with advanced plots
             fig = Figure(figsize=(17, 11), dpi=100)
 
             sample_labels = [f"S{int(n)}" for n in self.delta_ct_data['Sample_Number']]
             x_pos = np.arange(len(self.delta_ct_data))
 
-            # Plot 1: Violin plot
             ax1 = fig.add_subplot(2, 3, 1)
             target_vals = self.delta_ct_data['Target_Ct'].values
             reference_vals = self.delta_ct_data['Reference_Ct'].values
@@ -684,7 +724,6 @@ NOTES:
             ax1.set_title('Violin Plot: Ct Distribution')
             ax1.grid(axis='y', alpha=0.3)
 
-            # Plot 2: Delta Ct with different colormap
             ax2 = fig.add_subplot(2, 3, 2)
             colors_plasma = plt.cm.plasma(np.linspace(0, 1, len(self.delta_ct_data)))
             bars = ax2.bar(x_pos, self.delta_ct_data['Delta_Ct'], color=colors_plasma, edgecolor='black', linewidth=1.5, alpha=0.8)
@@ -697,7 +736,6 @@ NOTES:
             ax2.legend()
             ax2.grid(axis='y', alpha=0.3)
 
-            # Plot 3: Error distribution
             ax3 = fig.add_subplot(2, 3, 3)
             colors_cool = plt.cm.cool(np.linspace(0, 1, len(self.delta_ct_data)))
             ax3.bar(x_pos, self.delta_ct_data['Delta_Ct_STD'], color=colors_cool, edgecolor='black', alpha=0.8)
@@ -708,7 +746,6 @@ NOTES:
             ax3.set_xticklabels(sample_labels, rotation=45)
             ax3.grid(axis='y', alpha=0.3)
 
-            # Plot 4: Q-Q plot for normality check
             ax4 = fig.add_subplot(2, 3, 4)
             delta_ct_clean = self.delta_ct_data['Delta_Ct'].dropna()
             if len(delta_ct_clean) >= 3:
@@ -718,7 +755,6 @@ NOTES:
             else:
                 ax4.text(0.5, 0.5, 'Insufficient data for Q-Q plot', ha='center', va='center')
 
-            # Plot 5: Fold Change comparison (if available)
             ax5 = fig.add_subplot(2, 3, 5)
             if 'Fold_Change' in self.fold_change_data.columns:
                 colors_magma = plt.cm.magma(np.linspace(0, 1, len(self.fold_change_data)))
@@ -732,14 +768,12 @@ NOTES:
                 ax5.legend()
                 ax5.grid(axis='y', alpha=0.3)
 
-            # Plot 6: Ct values with confidence intervals
             ax6 = fig.add_subplot(2, 3, 6)
-            # Calculate 95% CI for means
             target_mean = self.delta_ct_data['Target_Ct'].mean()
             reference_mean = self.delta_ct_data['Reference_Ct'].mean()
             target_se = self.delta_ct_data['Target_Ct'].std() / np.sqrt(len(self.delta_ct_data))
             reference_se = self.delta_ct_data['Reference_Ct'].std() / np.sqrt(len(self.delta_ct_data))
-            ci = 1.96  # 95% CI
+            ci = 1.96
 
             means = [target_mean, reference_mean]
             errors = [ci * target_se, ci * reference_se]
@@ -754,12 +788,21 @@ NOTES:
 
             fig.subplots_adjust(hspace=0.75, wspace=0.45, left=0.1, right=0.9, top=0.9, bottom=0.1)
 
-            # Embed in tkinter
-            canvas = FigureCanvasTkAgg(fig, master=self.advanced_viz_frame)
-            canvas.draw()
-            canvas.get_tk_widget().pack(fill="both", expand=True)
+            output_folder = get_output_directory()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = output_folder / f"qPCR_AdvancedPlots_{timestamp}.png"
+            fig.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.close(fig)
 
-            self.update_status("Advanced visualizations complete!")
+            ctk.CTkLabel(
+                self.advanced_viz_frame,
+                text=f"Advanced visualizations saved to:\n{output_path}",
+                font=("Arial", 12),
+                wraplength=800,
+                justify="center"
+            ).pack(expand=True)
+
+            self.update_status("Advanced visualizations saved to desktop output folder")
 
         except Exception as e:
             messagebox.showerror("Error", f"Error creating advanced visualization:\n{str(e)}")

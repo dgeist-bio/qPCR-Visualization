@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+### [1.2.0] - 2026-07-18
+
+- **Changed the output of the visual graphics into an output folder on the desktop.
+- **Added a textbox for writing the sample name
+
+- **Changed python files:
+- qPCR_main_gui.py
+- qPCR-visualizer.py
+
 ## [1.1.0] - 2026-06-27
 
 ### Added
