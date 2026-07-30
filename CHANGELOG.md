@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+### [1.3.0] - 2026-07-30
+
+- **Changed the layout of the Graphical User Interface, so that it doesn't show the buttons for generating the (advanced) plots and calculations in the GUI. Now, everything is saved on the Desktop in the file qPCR_Ergebnisse. Furthermore, an executive summary of the most important values is now generated in a pdf file. Furthermore, the (advanced) plots are removed. It will be later again added. The GUI has now only one button for generating all files (pdf, png, etc.) and a status bar. After calculating and saving the file, it gives now on the output folder a csv. file, a viridis colormap of the delta CT values, the pdf summary file, a plasma colormap for the fold change values and the statistical analysis report in a .txt file.
+
+- **Changed files:
+- qPCR_main.gui.py
+- qPCR_pdf_summary.py (new!)
+- qPCR_visualizer.py
+- qPCR_delta_ct_calculation.py
+
 ### [1.2.0] - 2026-07-18
 
 - **Changed the output of the visual graphics into an output folder on the desktop.

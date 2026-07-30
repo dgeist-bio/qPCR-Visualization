@@ -44,6 +44,13 @@ def calculate_delta_ct(target_df, reference_df):
     
     target_df = target_df.sort_values('Sample_Number').reset_index(drop=True)
     reference_df = reference_df.sort_values('Sample_Number').reset_index(drop=True)
+
+    n = min(len(target_df), len(reference_df))
+    if n == 0:
+        return pd.DataFrame(columns=['Sample_Number', 'Sample_Name', 'Day', 'Target_Ct', 'Reference_Ct', 'Target_STD', 'Reference_STD', 'Delta_Ct', 'Delta_Ct_STD'])
+
+    target_df = target_df.iloc[:n].copy()
+    reference_df = reference_df.iloc[:n].copy()
     
     delta_ct_df = pd.DataFrame({
         'Sample_Number': target_df['Sample_Number'],
