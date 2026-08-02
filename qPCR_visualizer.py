@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from fpdf import FPDF
-
+from qPCR_pdf_layout import QPCRPDFReport, create_qpcr_summary_pdf
 
 def get_output_directory(output_dir=None):
     """Gibt das Ausgabeverzeichnis für qPCR-Ergebnisse und Plots zurück."""
@@ -34,6 +34,103 @@ def save_figure_to_output(fig, output_filename, output_dir=None):
 def load_results_csv(csv_file):
     """Lädt zuvor berechnete Ergebnisse aus einer CSV-Datei."""
     return pd.read_csv(csv_file)
+
+def create_melting_curve_plot(raw_file, output_path):
+    """
+    Liest die Rohdaten ein, filtert Programm 3 (Schmelzkurve) und 
+    erstellt einen sauberen Plot der Fluoreszenz über die Temperatur.
+    """
+    try:
+        # 1. Rohdaten einlesen (automatische Trennzeichen-Erkennung oder Tabulator)
+        if str(raw_file).endswith('.csv'):
+            df = pd.read_csv(raw_file, sep=None, engine='python')
+        else:
+            df = pd.read_csv(raw_file, sep='\t')
+
+        # 2. Ausschließlich die Schmelzkurve (Programm 3) extrahieren
+        if 'Prog#' in df.columns and 'SampleName' in df.columns:
+            df_melt = df[df['Prog#'] == 3].copy()
+        else:
+            # Fallback falls Spalten anders heißen oder das Format abweicht
+            df_melt = df.copy()
+
+        if df_melt.empty:
+            print("Schmelzkurve übersprungen: Keine Daten für Prog# == 3 gefunden.")
+            return False
+
+        # 3. Schmelzkurven visualisieren
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Iteriere durch jede vorhandene Probe und plotte sie
+        sample_col = 'SampleName' if 'SampleName' in df_melt.columns else df_melt.columns[0]
+        temp_col = 'Temp' if 'Temp' in df_melt.columns else next((c for c in df_melt.columns if 'temp' in c.lower()), None)
+        signal_col = '465-510' if '465-510' in df_melt.columns else next((c for c in df_melt.columns if '465' in c or 'fluores' in c.lower()), None)
+
+        if not temp_col or not signal_col:
+            print(f"Schmelzkurve: Benötigte Spalten (Temp / Signal) nicht gefunden in {list(df_melt.columns)}")
+            return False
+
+        for sample in df_melt[sample_col].unique():
+            sample_data = df_melt[df_melt[sample_col] == sample]
+            ax.plot(sample_data[temp_col], sample_data[signal_col], label=str(sample))
+
+        ax.set_title('Schmelzkurve (Fluoreszenz vs. Temperatur)', fontsize=14, fontweight='bold', pad=15)
+        ax.set_xlabel('Temperatur (°C)', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Fluoreszenz (465-510 nm)', fontsize=12, fontweight='bold')
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize='small')
+        ax.grid(True, linestyle='--', alpha=0.5)
+        
+        plt.tight_layout()
+        
+        # Speichern für das PDF-Layout
+        fig.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        
+        # Optional: Direkt als JSON exportieren (z. B. für externe Pipelines / Blender-Animationen)
+        json_output_path = Path(output_path).with_name('schmelzkurve_gefiltert.json')
+        df_melt.to_json(json_output_path, orient='records', indent=4)
+        
+        return True
+
+    except Exception as e:
+        print(f"Fehler beim Erstellen der Schmelzkurve: {e}")
+        return False
+
+def create_grouped_boxplot(df, output_path, value_col='Delta_Ct', group_col='Day', title='Grouped qPCR Boxplot'):
+    """Create a grouped boxplot for qPCR data (e.g. by Day)."""
+    if df is None or df.empty:
+        return False
+
+    if group_col not in df.columns:
+        if 'Day' in df.columns:
+            group_col = 'Day'
+        else:
+            return False
+
+    if value_col not in df.columns:
+        return False
+
+    plot_df = df[[group_col, value_col]].dropna().copy()
+    if plot_df.empty:
+        return False
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    grouped = [values.tolist() for _, values in plot_df.groupby(group_col)[value_col]]
+    labels = [str(label) for label in plot_df[group_col].drop_duplicates().tolist()]
+
+    if not grouped:
+        return False
+
+    ax.boxplot(grouped, labels=labels, patch_artist=True)
+    ax.set_xlabel(group_col, fontsize=12, fontweight='bold')
+    ax.set_ylabel(value_col, fontsize=12, fontweight='bold')
+    ax.set_title(f'{title} by {group_col}', fontsize=14, fontweight='bold')
+    ax.grid(axis='y', linestyle='--', alpha=0.3)
+
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    return True
 
 
 def plot_delta_ct_with_colormap(delta_ct_df, colormap='viridis', output_filename=None, sample_name=None, output_dir=None):
@@ -149,211 +246,4 @@ def save_combined_publication_quality_plots(delta_ct_df, fold_change_df, colorma
     plt.tight_layout()
     return save_figure_to_output(fig, output_filename, output_dir=output_dir)
 
-
-class QPCRPDFReport(FPDF):
-    """FPDF-Klasse für ein professionelles qPCR-Berichtslayout."""
-
-    def __init__(self, sample_name=None):
-        super().__init__(orientation='P', unit='mm', format='A4')
-        self.set_auto_page_break(auto=True, margin=15)
-        self.sample_name = sample_name or "Nicht angegeben"
-        
-        self.c_primary = (31, 106, 165)     # Steel Blue
-        self.c_secondary = (47, 165, 114)   # Emerald Green
-        self.c_text = (40, 40, 40)          # Charcoal Text
-        self.c_bg_light = (248, 249, 250)   # Light Gray
-        self.c_border = (220, 224, 230)     # Border
-
-    def sanitize_text(self, text: str) -> str:
-        """Ersetzt Unicode-Sonderzeichen für Standard-Helvetica."""
-        if not isinstance(text, str):
-            text = str(text)
-        return (text.replace('Δ', 'Delta ')
-                    .replace('±', '+/- ')
-                    .replace('α', 'alpha')
-                    .replace('–', '-')
-                    .replace('—', '-'))
-
-    def header(self):
-        self.set_fill_color(*self.c_primary)
-        self.rect(0, 0, 210, 4, 'F')
-
-        self.set_font("Helvetica", "B", 8)
-        self.set_text_color(130, 130, 130)
-        self.set_xy(12, 8)
-        self.cell(100, 5, "qPCR ANALYSIS REPORT", align="L")
-        self.set_xy(100, 8)
-        self.cell(98, 5, self.sanitize_text(f"Probe: {self.sample_name}"), align="R")
-        
-        self.set_draw_color(*self.c_border)
-        self.set_line_width(0.3)
-        self.line(12, 14, 198, 14)
-        self.ln(8)
-
-    def footer(self):
-        self.set_y(-12)
-        self.set_font("Helvetica", "I", 8)
-        self.set_text_color(150, 150, 150)
-        page_str = self.sanitize_text(f"Seite {self.page_no()} / {{nb}}")
-        self.cell(0, 8, page_str, align="C")
-
-    def section_title(self, title: str):
-        self.ln(3)
-        self.set_font("Helvetica", "B", 13)
-        self.set_text_color(*self.c_primary)
-        self.cell(0, 7, self.sanitize_text(title), ln=True, align="L")
-        self.set_draw_color(*self.c_primary)
-        self.set_line_width(0.5)
-        self.line(12, self.get_y(), 198, self.get_y())
-        self.set_line_width(0.2)
-        self.ln(4)
-
-    def draw_summary_cards(self, sample_count, mean_delta_ct, mean_fc, stats_summary):
-        y_pos = self.get_y()
-        card_w = 43.5
-        card_h = 18
-        spacing = 3.5
-        x_start = 12
-
-        cards = [
-            ("Proben Anzahl", str(sample_count), (245, 247, 250)),
-            ("Mean Delta Ct", f"{mean_delta_ct:.3f}" if not np.isnan(mean_delta_ct) else "N/A", (235, 243, 250)),
-            ("Mean Fold Change", f"{mean_fc:.3f}" if not np.isnan(mean_fc) else "N/A", (235, 248, 242)),
-            ("Statistik Status", stats_summary, (253, 242, 242) if "YES" in stats_summary or "Signifikant" in stats_summary else (245, 247, 250))
-        ]
-
-        for i, (label, val, bg_color) in enumerate(cards):
-            x = x_start + i * (card_w + spacing)
-            self.set_xy(x, y_pos)
-            self.set_fill_color(*bg_color)
-            self.set_draw_color(*self.c_border)
-            self.rect(x, y_pos, card_w, card_h, 'DF')
-
-            self.set_xy(x, y_pos + 2.5)
-            self.set_font("Helvetica", "B", 7.5)
-            self.set_text_color(110, 110, 110)
-            self.cell(card_w, 4, self.sanitize_text(label), align="C")
-
-            self.set_xy(x, y_pos + 8)
-            self.set_font("Helvetica", "B", 11)
-            self.set_text_color(*self.c_text)
-            self.cell(card_w, 6, self.sanitize_text(val), align="C")
-
-        self.set_xy(12, y_pos + card_h + 6)
-
-
-def create_qpcr_summary_pdf(delta_ct_df, fold_change_df, stats_report, output_path, sample_name=None, plot_paths=None):
-    """Erstellt das qPCR-Zusammenfassungs-PDF."""
-    pdf = QPCRPDFReport(sample_name=sample_name)
-    pdf.alias_nb_pages()
-    pdf.add_page()
-
-    # Title
-    pdf.set_font("Helvetica", "B", 18)
-    pdf.set_text_color(*pdf.c_primary)
-    pdf.cell(0, 8, "qPCR Executive Summary", ln=True, align="L")
-    
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(120, 120, 120)
-    now_str = datetime.datetime.now().strftime("%d.%m.%Y um %H:%M Uhr")
-    pdf.cell(0, 5, pdf.sanitize_text(f"Erstellt am: {now_str}"), ln=True, align="L")
-    pdf.ln(3)
-
-    # Metrics
-    sample_count = len(delta_ct_df) if delta_ct_df is not None else 0
-    mean_d_ct = float(delta_ct_df['Delta_Ct'].mean()) if (delta_ct_df is not None and 'Delta_Ct' in delta_ct_df) else np.nan
-    mean_fc = float(fold_change_df['Fold_Change'].mean()) if (fold_change_df is not None and 'Fold_Change' in fold_change_df) else np.nan
-    
-    stats_flag = "Signifikant" if (stats_report and "p-value" in stats_report.lower() and "significant (alpha=0.05): yes" in stats_report.lower()) else "Unauffällig"
-
-    pdf.draw_summary_cards(sample_count, mean_d_ct, mean_fc, stats_flag)
-
-    # Table 1: Delta Ct
-    if delta_ct_df is not None and not delta_ct_df.empty:
-        pdf.section_title("1. Delta Ct Ergebnisse")
-        
-        headers = ["Sample #", "Sample Name", "Target Ct", "Ref Ct", "Delta Ct", "Std. Dev"]
-        widths = [20, 50, 28, 28, 30, 30]
-
-        pdf.set_font("Helvetica", "B", 8.5)
-        pdf.set_fill_color(*pdf.c_primary)
-        pdf.set_text_color(255, 255, 255)
-        for h, w in zip(headers, widths):
-            pdf.cell(w, 6, pdf.sanitize_text(h), border=0, align="C", fill=True)
-        pdf.ln()
-
-        pdf.set_font("Helvetica", "", 8)
-        pdf.set_text_color(*pdf.c_text)
-        fill = False
-
-        for _, row in delta_ct_df.iterrows():
-            pdf.set_fill_color(248, 249, 250) if fill else pdf.set_fill_color(255, 255, 255)
-            
-            vals = [
-                str(row.get('Sample_Number', '')),
-                str(row.get('Sample_Name', ''))[:26],
-                f"{row.get('Target_Ct', 0):.3f}" if pd.notnull(row.get('Target_Ct')) else "N/A",
-                f"{row.get('Reference_Ct', 0):.3f}" if pd.notnull(row.get('Reference_Ct')) else "N/A",
-                f"{row.get('Delta_Ct', 0):.3f}" if pd.notnull(row.get('Delta_Ct')) else "N/A",
-                f"{row.get('Delta_Ct_STD', 0):.3f}" if pd.notnull(row.get('Delta_Ct_STD')) else "N/A"
-            ]
-            
-            for v, w in zip(vals, widths):
-                pdf.cell(w, 5.5, pdf.sanitize_text(v), border="B", align="C", fill=fill)
-            pdf.ln()
-            fill = not fill
-
-    # Table 2: Fold Change
-    if fold_change_df is not None and not fold_change_df.empty:
-        pdf.ln(4)
-        pdf.section_title("2. Fold Change Ergebnisse (2^-Delta Delta Ct)")
-        
-        headers_fc = ["Sample #", "Sample Name", "Delta Ct", "dDelta Ct", "Fold Change", "FC StdDev"]
-        widths_fc = [20, 50, 28, 28, 30, 30]
-
-        pdf.set_font("Helvetica", "B", 8.5)
-        pdf.set_fill_color(47, 165, 114)
-        pdf.set_text_color(255, 255, 255)
-        for h, w in zip(headers_fc, widths_fc):
-            pdf.cell(w, 6, pdf.sanitize_text(h), border=0, align="C", fill=True)
-        pdf.ln()
-
-        pdf.set_font("Helvetica", "", 8)
-        pdf.set_text_color(*pdf.c_text)
-        fill = False
-
-        for _, row in fold_change_df.iterrows():
-            pdf.set_fill_color(248, 249, 250) if fill else pdf.set_fill_color(255, 255, 255)
-            
-            vals = [
-                str(row.get('Sample_Number', '')),
-                str(row.get('Sample_Name', ''))[:26],
-                f"{row.get('Delta_Ct', 0):.3f}" if pd.notnull(row.get('Delta_Ct')) else "N/A",
-                f"{row.get('Delta_Delta_Ct', 0):.3f}" if pd.notnull(row.get('Delta_Delta_Ct')) else "N/A",
-                f"{row.get('Fold_Change', 0):.3f}" if pd.notnull(row.get('Fold_Change')) else "N/A",
-                f"{row.get('Fold_Change_STD', 0):.3f}" if pd.notnull(row.get('Fold_Change_STD')) else "N/A"
-            ]
-            
-            for v, w in zip(vals, widths_fc):
-                pdf.cell(w, 5.5, pdf.sanitize_text(v), border="B", align="C", fill=fill)
-            pdf.ln()
-            fill = not fill
-
-    # Page 2: Statistics Report
-    if stats_report:
-        pdf.add_page()
-        pdf.section_title("3. Statistische Analyse & Auswertung")
-        
-        pdf.set_font("Courier", "", 7.5)
-        pdf.set_fill_color(248, 249, 250)
-        pdf.set_draw_color(*pdf.c_border)
-        
-        cleaned_stats = pdf.sanitize_text(stats_report)
-        pdf.multi_cell(186, 3.8, cleaned_stats, border=1, align="L", fill=True)
-
-    # Output PDF
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    pdf.output(str(output_path))
-    print(f"✓ PDF erfolgreich im FPDF-Layout gespeichert: {output_path}")
-    return output_path
+### Layout was here:

@@ -254,7 +254,7 @@ def main():
     """
     # Configuration
     INPUT_FILE = "230913 qPCR and SD.txt"
-    RAW_SAMPLE_FILE = "230913 BV-173_ID3_AS18_Olaparib_Combi_Day1andDay2_DG.txt"
+    RAW_SAMPLE_FILE = "230913 qPCR and SD2.txt"
     COLORMAP = 'viridis'  # Change to 'magma' for alternative colormap
     OUTPUT_PREFIX = "qPCR_results"
     

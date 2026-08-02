@@ -1,14 +1,18 @@
 import sys
 import os
-from pathlib import Path
-from datetime import datetime
-import customtkinter as ctk
-from tkinter import filedialog, messagebox
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
+import customtkinter as ctk
 import pandas as pd
 import numpy as np
+
+from pathlib import Path
+from datetime import datetime
+from tkinter import filedialog, messagebox
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+from scipy import stats
+from scipy.stats import ttest_ind, f_oneway, mannwhitneyu
+
 from scipy import stats
 from scipy.stats import ttest_ind, f_oneway, mannwhitneyu
 
@@ -20,9 +24,9 @@ from qPCR_visualizer import (
     plot_delta_ct_with_colormap,
     plot_fold_change_with_colormap,
     save_combined_publication_quality_plots,
-    create_qpcr_summary_pdf,
     get_output_directory,
 )
+from qPCR_pdf_layout import create_qpcr_summary_pdf, QPCRPDFReport
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -32,9 +36,9 @@ class qPCRAnalyzerApp(ctk.CTk, qPCRSummaryMixin):
     def __init__(self):
         super().__init__()
 
-        self.title("qPCR Analysis Suite v1.3.0 - Professional Edition")
-        self.geometry("800x600")
-        self.configure(fg_color="#1A1A1A") # Tiefdunkler Hintergrund wie beim MTT Analyzer
+        self.title("qPCR Analysis Suite v1.4.0 - Professional Edition")
+        self.geometry("1000x800")
+        self.configure(fg_color="#1A1A1A")
 
         # Storage for selected files and data
         self.target_file = None
@@ -55,11 +59,11 @@ class qPCRAnalyzerApp(ctk.CTk, qPCRSummaryMixin):
         )
         self.header_label.pack(pady=(30, 15))
 
-        # --- Main Card (Zentrierter Container) ---
+        # --- Main Card (Centralized Container) ---
         main_card = ctk.CTkFrame(self, corner_radius=15, fg_color="#242424")
         main_card.pack(pady=10, padx=60, fill="x", expand=False)
 
-        # --- Input Card (Dateien & Parameter) ---
+        # --- Input Card (Files & Parameter) ---
         input_card = ctk.CTkFrame(main_card, corner_radius=12, fg_color="#2B2B2B")
         input_card.pack(pady=20, padx=30, fill="x")
 
@@ -84,6 +88,16 @@ class qPCRAnalyzerApp(ctk.CTk, qPCRSummaryMixin):
         )
         self.target_file_label.pack(side="left", padx=10, fill="x", expand=True)
 
+        self.target_remove_btn = ctk.CTkButton(
+            target_frame,
+            text="Remove",
+            command=self.remove_target_file,
+            width=90,
+            fg_color="#5C2F2F",
+            hover_color="#7A3B3B"
+        )
+        self.target_remove_btn.pack(side="right")
+
         self.target_btn = ctk.CTkButton(
             target_frame,
             text="📁 Browse",
@@ -92,7 +106,7 @@ class qPCRAnalyzerApp(ctk.CTk, qPCRSummaryMixin):
             fg_color="#3A3A3A",
             hover_color="#4A4A4A"
         )
-        self.target_btn.pack(side="right")
+        self.target_btn.pack(side="right", padx=(0, 8))
 
         # Reference Gene File Selection
         reference_frame = ctk.CTkFrame(input_card, fg_color="transparent")
@@ -108,6 +122,16 @@ class qPCRAnalyzerApp(ctk.CTk, qPCRSummaryMixin):
         )
         self.reference_file_label.pack(side="left", padx=10, fill="x", expand=True)
 
+        self.reference_remove_btn = ctk.CTkButton(
+            reference_frame,
+            text="Remove",
+            command=self.remove_reference_file,
+            width=90,
+            fg_color="#5C2F2F",
+            hover_color="#7A3B3B"
+        )
+        self.reference_remove_btn.pack(side="right")
+
         self.reference_btn = ctk.CTkButton(
             reference_frame,
             text="📁 Browse",
@@ -116,7 +140,44 @@ class qPCRAnalyzerApp(ctk.CTk, qPCRSummaryMixin):
             fg_color="#3A3A3A",
             hover_color="#4A4A4A"
         )
-        self.reference_btn.pack(side="right")
+        self.reference_btn.pack(side="right", padx=(0, 8))
+
+        # Speicherort für die Raw-Datei initialisieren
+        self.raw_file = None
+
+        # --- Raw/Melting Curve File Selection (Optional) ---
+        raw_frame = ctk.CTkFrame(input_card, fg_color="transparent")
+        raw_frame.pack(fill="x", pady=5, padx=15)
+
+        ctk.CTkLabel(raw_frame, text="Raw/Melting (opt.):", font=("Helvetica", 12), width=120, anchor="w").pack(side="left")
+        self.raw_file_label = ctk.CTkLabel(
+            raw_frame,
+            text="Keine Datei ausgewählt (Optional)",
+            font=("Helvetica", 11, "italic"),
+            text_color="#8D8D8D",
+            anchor="w"
+        )
+        self.raw_file_label.pack(side="left", padx=10, fill="x", expand=True)
+
+        self.raw_remove_btn = ctk.CTkButton(
+            raw_frame,
+            text="Remove",
+            command=self.remove_raw_file,
+            width=90,
+            fg_color="#5C2F2F",
+            hover_color="#7A3B3B"
+        )
+        self.raw_remove_btn.pack(side="right")
+
+        self.raw_btn = ctk.CTkButton(
+            raw_frame,
+            text="📁 Browse",
+            command=self.select_raw_file,
+            width=110,
+            fg_color="#3A3A3A",
+            hover_color="#4A4A4A"
+        )
+        self.raw_btn.pack(side="right", padx=(0, 8))
 
         # Sample Name
         sample_frame = ctk.CTkFrame(input_card, fg_color="transparent")
@@ -179,6 +240,12 @@ class qPCRAnalyzerApp(ctk.CTk, qPCRSummaryMixin):
             self.target_file_label.configure(text=os.path.basename(file_path), text_color="#2FA572")
             self.update_status("Target file selected")
 
+    def remove_target_file(self):
+        """Clear the selected target gene file"""
+        self.target_file = None
+        self.target_file_label.configure(text="Keine Datei ausgewählt", text_color="#8D8D8D")
+        self.update_status("Target file removed")
+
     def select_reference_file(self):
         """Select reference gene data file"""
         file_path = filedialog.askopenfilename(
@@ -189,6 +256,29 @@ class qPCRAnalyzerApp(ctk.CTk, qPCRSummaryMixin):
             self.reference_file = file_path
             self.reference_file_label.configure(text=os.path.basename(file_path), text_color="#2FA572")
             self.update_status("Reference file selected")
+
+    def remove_reference_file(self):
+        """Clear the selected reference gene file"""
+        self.reference_file = None
+        self.reference_file_label.configure(text="Keine Datei ausgewählt", text_color="#8D8D8D")
+        self.update_status("Reference file removed")
+
+    def select_raw_file(self):
+        """Select optional Raw Data / Melting Curve file"""
+        file_path = filedialog.askopenfilename(
+            title="Select Raw Data / Melting Curve File (Optional)",
+            filetypes=[("Text Files", "*.txt"), ("CSV Files", "*.csv"), ("All Files", "*.*")]
+        )
+        if file_path:
+            self.raw_file = file_path
+            self.raw_file_label.configure(text=os.path.basename(file_path), text_color="#2FA572")
+            self.update_status("Raw/Melting file selected")
+
+    def remove_raw_file(self):
+        """Clear the selected raw file"""
+        self.raw_file = None
+        self.raw_file_label.configure(text="Keine Datei ausgewählt (Optional)", text_color="#8D8D8D")
+        self.update_status("Raw/Melting file removed")
 
 ### Changed into qPCR_pdf_summary.py
 
