@@ -133,6 +133,92 @@ def create_grouped_boxplot(df, output_path, value_col='Delta_Ct', group_col='Day
     return True
 
 
+def create_volcano_plot(fold_change_df, output_path, title='Volcano Plot'):
+    """Create a volcano plot using fold change and p-value-like significance proxies."""
+    if fold_change_df is None or fold_change_df.empty:
+        return False
+
+    plot_df = fold_change_df.dropna(subset=['Fold_Change']).copy()
+    if plot_df.empty:
+        return False
+
+    plot_df['log2_fc'] = np.log2(plot_df['Fold_Change'].astype(float))
+
+    if 'P_Value' in plot_df.columns:
+        p_values = pd.to_numeric(plot_df['P_Value'], errors='coerce')
+    elif 'p_value' in plot_df.columns:
+        p_values = pd.to_numeric(plot_df['p_value'], errors='coerce')
+    else:
+        uncertainty = pd.to_numeric(plot_df.get('Fold_Change_STD', pd.Series(1.0, index=plot_df.index)), errors='coerce').fillna(1.0)
+        z_scores = np.abs(plot_df['log2_fc']) / uncertainty.replace(0, 1.0)
+        p_values = np.exp(-z_scores)
+
+    plot_df['neg_log10_p'] = -np.log10(p_values.clip(lower=1e-300))
+    plot_df = plot_df.dropna(subset=['log2_fc', 'neg_log10_p'])
+
+    if plot_df.empty:
+        return False
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.scatter(plot_df['log2_fc'], plot_df['neg_log10_p'], s=75, color='#4C78A8', edgecolor='black', alpha=0.8)
+
+    for _, row in plot_df.iterrows():
+        label = row.get('Sample_Name') or row.get('Target_Sample_Name') or row.get('Reference_Sample_Name') or ''
+        if label:
+            ax.annotate(str(label), (row['log2_fc'], row['neg_log10_p']), xytext=(3, 3), textcoords='offset points', fontsize=7)
+
+    ax.axvline(0, color='gray', linestyle='--', linewidth=1)
+    ax.axvline(1, color='red', linestyle='--', linewidth=1, alpha=0.7)
+    ax.axvline(-1, color='red', linestyle='--', linewidth=1, alpha=0.7)
+    ax.axhline(-np.log10(0.05), color='red', linestyle='--', linewidth=1, alpha=0.7)
+    ax.set_xlabel('log2(Fold Change)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('-log10(p-value)', fontsize=12, fontweight='bold')
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    ax.grid(True, linestyle='--', alpha=0.3)
+
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    return True
+
+
+def create_violin_plot(df, output_path, value_col='Delta_Ct', group_col='Day', title='Delta Ct Distribution by Day'):
+    """Create a violin plot for qPCR values grouped by a categorical variable."""
+    if df is None or df.empty:
+        return False
+
+    if group_col not in df.columns or value_col not in df.columns:
+        return False
+
+    plot_df = df[[group_col, value_col]].dropna().copy()
+    if plot_df.empty:
+        return False
+
+    labels = [str(label) for label in plot_df[group_col].drop_duplicates().tolist()]
+    grouped_values = [values.tolist() for _, values in plot_df.groupby(group_col)[value_col]]
+
+    if not grouped_values:
+        return False
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    parts = ax.violinplot(grouped_values, showmeans=False, showmedians=True)
+    for body in parts['bodies']:
+        body.set_facecolor('#4C78A8')
+        body.set_edgecolor('#2F4B7C')
+        body.set_alpha(0.8)
+
+    ax.set_xticks(np.arange(1, len(labels) + 1))
+    ax.set_xticklabels(labels if labels else ['Value'])
+    ax.set_ylabel(value_col, fontsize=12, fontweight='bold')
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    ax.grid(axis='y', linestyle='--', alpha=0.3)
+
+    plt.tight_layout()
+    fig.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    return True
+
+
 def plot_delta_ct_with_colormap(delta_ct_df, colormap='viridis', output_filename=None, sample_name=None, output_dir=None):
     """Erstellt ein Balkendiagramm für Delta Ct-Werte."""
     if output_filename is None:

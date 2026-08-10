@@ -1,0 +1,19 @@
+{
+    "app_meta": {
+        "name": "qPCR Analysis Suite",
+        "version": "1.5.0",
+        "author": "Daniel Geist",
+        "description": "A comprehensive suite for qPCR data analysis, visualization, and reporting."
+    },
+    "gui_settings": {
+        "theme": "dark",
+        "window_size": {
+            "width": 1000,
+            "height": 800
+        },
+        "font": {
+            "family": "Arial",
+            "size": 12
+        }
+    }
+}

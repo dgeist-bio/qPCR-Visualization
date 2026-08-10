@@ -16,6 +16,8 @@ from qPCR_visualizer import (
     get_output_directory,
     create_melting_curve_plot,
     create_grouped_boxplot,
+    create_volcano_plot,
+    create_violin_plot,
 )
 from qPCR_pdf_layout import create_qpcr_summary_pdf
 
@@ -30,6 +32,7 @@ class qPCRSummaryMixin:
         self.update_status("Loading data...")
         self.target_data = load_qpcr_data(self.target_file, raw_sample_file=self.raw_file)
         self.reference_data = load_qpcr_data(self.reference_file, raw_sample_file=self.raw_file)
+
 
         self.update_status("Calculating ΔCt...")
         self.delta_ct_data = calculate_delta_ct(self.target_data, self.reference_data)
@@ -103,59 +106,90 @@ Mann-Whitney U Test (non-parametric alternative):
         return stats_report
 
     def build_analysis_json(self):
-        """Build a JSON export containing sample metadata and qPCR analysis values."""
-        if self.delta_ct_data is None:
-            return {"generated_at": datetime.now().isoformat(), "samples": []}
-
-        target_lookup = pd.DataFrame()
-        if self.target_data is not None and not self.target_data.empty and 'Sample_Number' in self.target_data.columns:
-            target_lookup = self.target_data[['Sample_Number', 'Well1', 'Sample_Name', 'Day']].drop_duplicates(subset=['Sample_Number'])
+        """Build the raw plate metadata JSON from the original qPCR raw export."""
+        if self.raw_file and os.path.exists(self.raw_file):
+            from qPCR_data_loader import parse_raw_plate_data
+            samples = parse_raw_plate_data(self.raw_file)
+            return {
+                "generated_at": datetime.now().isoformat(),
+                "samples": [
+                    {
+                        "position": row.get('position'),
+                        "well": row.get('well'),
+                        "name": row.get('name'),
+                        "sample_name": row.get('sample_name'),
+                        "cp": row.get('cp'),
+                        "cp_values": {
+                            "cp": row.get('cp'),
+                        },
+                        "concentration": row.get('concentration'),
+                        "day": row.get('day'),
+                        "day_number": row.get('day_number'),
+                    }
+                    for row in samples
+                ],
+            }
 
         records = []
-        for _, row in self.delta_ct_data.iterrows():
-            sample_number = row.get('Sample_Number')
-            sample_name = str(row.get('Sample_Name') or '')
-            well = None
-            day = str(row.get('Day') or '')
+        if self.target_data is not None and not self.target_data.empty:
+            for _, row in self.target_data.iterrows():
+                cp = row.get('MeanCp')
+                records.append({
+                    "position": row.get('Well1'),
+                    "well": row.get('Well1'),
+                    "name": row.get('Sample_Name') or row.get('Samples'),
+                    "sample_name": row.get('Sample_Name') or row.get('Samples'),
+                    "cp": cp,
+                    "cp_values": {"cp": cp},
+                    "concentration": row.get('Mean_conc'),
+                    "day": row.get('Day'),
+                    "day_number": int(re.search(r'(\d+)', str(row.get('Day') or '')).group(1)) if isinstance(row.get('Day'), str) and re.search(r'(\d+)', row.get('Day') or '') else None,
+                })
+        if self.reference_data is not None and not self.reference_data.empty:
+            for _, row in self.reference_data.iterrows():
+                cp = row.get('MeanCp')
+                records.append({
+                    "position": row.get('Well1'),
+                    "well": row.get('Well1'),
+                    "name": row.get('Sample_Name') or row.get('Samples'),
+                    "sample_name": row.get('Sample_Name') or row.get('Samples'),
+                    "cp": cp,
+                    "cp_values": {"cp": cp},
+                    "concentration": row.get('Mean_conc'),
+                    "day": row.get('Day'),
+                    "day_number": int(re.search(r'(\d+)', str(row.get('Day') or '')).group(1)) if isinstance(row.get('Day'), str) and re.search(r'(\d+)', row.get('Day') or '') else None,
+                })
 
-            if target_lookup is not None and not target_lookup.empty and sample_number is not None:
-                match = target_lookup[target_lookup['Sample_Number'].astype(str) == str(sample_number)]
-                if not match.empty:
-                    first = match.iloc[0]
-                    well = first.get('Well1')
-                    if not sample_name:
-                        sample_name = str(first.get('Sample_Name') or '')
-                    if not day:
-                        day = str(first.get('Day') or '')
+        return {
+            "generated_at": datetime.now().isoformat(),
+            "samples": records,
+        }
 
-            if not day and sample_name:
-                match = re.search(r'(D\d+)', sample_name, flags=re.IGNORECASE)
-                if match:
-                    day = match.group(1).upper()
+    def build_summary_json(self):
+        """Build a compact summary JSON with well, sample name, day, and fold change."""
+        if self.fold_change_data is None or self.fold_change_data.empty:
+            return {"generated_at": datetime.now().isoformat(), "samples": []}
 
-            target_ct = row.get('Target_Ct')
-            ref_ct = row.get('Reference_Ct')
-            delta_ct = row.get('Delta_Ct')
+        records = []
+        for _, row in self.fold_change_data.iterrows():
+            sample_name = str(row.get('Sample_Name') or '').strip() or str(row.get('Target_Sample_Name') or '').strip() or str(row.get('Reference_Sample_Name') or '').strip() or "Unknown"
+            day_match = re.search(r'(D\d+)', sample_name, flags=re.IGNORECASE)
+            day = day_match.group(1).upper() if day_match else str(row.get('Day') or '').strip() or "Unknown"
+            day_number = int(re.search(r'(\d+)', day).group(1)) if day.startswith('D') and re.search(r'(\d+)', day) else None
 
-            fold_change = None
-            if self.fold_change_data is not None and not self.fold_change_data.empty and 'Sample_Number' in self.fold_change_data.columns:
-                fc_match = self.fold_change_data[self.fold_change_data['Sample_Number'].astype(str) == str(sample_number)]
-                if not fc_match.empty:
-                    fold_change = fc_match.iloc[0].get('Fold_Change')
+            target_cp = row.get('Target_Ct')
+            reference_cp = row.get('Reference_Ct')
 
             record = {
-                "well": well or "Unknown",
-                "sample_name": sample_name or "Unknown",
-                "day": day or None,
-                "sample_number": int(sample_number) if pd.notna(sample_number) else None,
+                "well": row.get('Target_Well') or row.get('Reference_Well') or row.get('Sample_Name') or "Unknown",
+                "sample_name": sample_name,
+                "day": day,
+                "day_number": day_number,
                 "cp_values": {
-                    "target_cp": float(target_ct) if pd.notna(target_ct) else None,
-                    "reference_cp": float(ref_ct) if pd.notna(ref_ct) else None,
+                    "target_cp": float(target_cp) if pd.notna(target_cp) else None,
+                    "reference_cp": float(reference_cp) if pd.notna(reference_cp) else None,
                 },
-                "target_ct": float(target_ct) if pd.notna(target_ct) else None,
-                "ref_ct": float(ref_ct) if pd.notna(ref_ct) else None,
-                "delta_ct": float(delta_ct) if pd.notna(delta_ct) else None,
-                "fold_change": float(fold_change) if pd.notna(fold_change) else None,
+                "fold_change": float(row.get('Fold_Change')) if pd.notna(row.get('Fold_Change')) else None,
             }
             records.append(record)
 
@@ -221,6 +255,25 @@ Mann-Whitney U Test (non-parametric alternative):
                     title='Delta Ct by Day'
                 )
 
+            volcano_plot_path = os.path.join(output_folder, f"qPCR_VolcanoPlot_{timestamp}.png")
+            volcano_plot_exists = False
+            if self.fold_change_data is not None and not self.fold_change_data.empty:
+                self.update_status("Generiere Volcano-Plot...")
+                volcano_plot_exists = create_volcano_plot(self.fold_change_data, volcano_plot_path)
+
+            # --- Vorher stand hier group_col='Day' ---
+            violin_plot_path = os.path.join(output_folder, f"qPCR_ViolinPlot_{timestamp}.png")
+            violin_plot_exists = False
+            if 'Sample_Name' in self.delta_ct_data.columns: # <--- Geändert auf Sample_Name
+                self.update_status("Generiere Violin-Plot...")
+                violin_plot_exists = create_violin_plot(
+                    self.delta_ct_data,
+                    violin_plot_path,
+                    value_col='Delta_Ct',
+                    group_col='Sample_Name',
+                    title='Delta Ct Distribution by Sample'
+                )
+
             # 5. PDF Erstellen
             summary_pdf = os.path.join(output_folder, f"qPCR_ExecutiveSummary_{timestamp}.pdf")
             create_qpcr_summary_pdf(
@@ -232,13 +285,29 @@ Mann-Whitney U Test (non-parametric alternative):
                 delta_ct_plot=p1_path,
                 fold_change_plot=p2_path,
                 melting_plot=p3_path if melting_plot_exists else None,
-                grouped_boxplot=grouped_boxplot_path if grouped_boxplot_exists else None
+                grouped_boxplot=grouped_boxplot_path if grouped_boxplot_exists else None,
+                volcano_plot=volcano_plot_path if volcano_plot_exists else None,
+                violin_plot=violin_plot_path if violin_plot_exists else None,
+                raw_target_data=self.target_data,
+                raw_reference_data=self.reference_data,
             )
 
             analysis_json = self.build_analysis_json()
+            summary_json = self.build_summary_json()
+
+            combined_json = {
+                "generated_at": datetime.now().isoformat(),
+                "analysis_export": analysis_json,
+                "summary_export": summary_json,
+            }
+
             json_path = os.path.join(output_folder, f"qPCR_AnalysisExport_{timestamp}.json")
             with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(analysis_json, f, indent=2, ensure_ascii=False)
+                json.dump(combined_json, f, indent=2, ensure_ascii=False)
+
+            summary_json_path = os.path.join(output_folder, f"qPCR_SummaryExport_{timestamp}.json")
+            with open(summary_json_path, 'w', encoding='utf-8') as f:
+                json.dump(summary_json, f, indent=2, ensure_ascii=False)
 
             if os.path.exists(p1_path):
                 os.remove(p1_path)
@@ -246,6 +315,12 @@ Mann-Whitney U Test (non-parametric alternative):
                 os.remove(p2_path)
             if os.path.exists(p3_path) and melting_plot_exists:
                 os.remove(p3_path)
+            if os.path.exists(grouped_boxplot_path) and grouped_boxplot_exists:
+                os.remove(grouped_boxplot_path)
+            if os.path.exists(volcano_plot_path) and volcano_plot_exists:
+                os.remove(volcano_plot_path)
+            if os.path.exists(violin_plot_path) and violin_plot_exists:
+                os.remove(violin_plot_path)
 
             self.progress.stop()
             self.progress.set(1)

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+### [1.5.0] - 2026-08-10
+
+- **Added a Violin and Volcano Plot
+- **Beginning of the refactoring of data into a json file.
+
 ### [1.4.0] - 2026-08-02
 
 - **Added a "Remove" Button in the GUI for the selected files

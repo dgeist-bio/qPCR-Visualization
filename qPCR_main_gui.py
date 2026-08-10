@@ -1,9 +1,12 @@
 import sys
 import os
+import threading
 import matplotlib.pyplot as plt
 import customtkinter as ctk
 import pandas as pd
 import numpy as np
+import json
+import qPCR_visualizer
 
 from pathlib import Path
 from datetime import datetime
@@ -13,19 +16,10 @@ from matplotlib.figure import Figure
 from scipy import stats
 from scipy.stats import ttest_ind, f_oneway, mannwhitneyu
 
-from scipy import stats
-from scipy.stats import ttest_ind, f_oneway, mannwhitneyu
-
 # Import qPCR modules
 from qPCR_data_loader import load_qpcr_data, separate_genes, get_sample_groups
 from qPCR_pdf_summary import qPCRSummaryMixin
 from qPCR_delta_ct_calculation import calculate_delta_ct, calculate_fold_change
-from qPCR_visualizer import (
-    plot_delta_ct_with_colormap,
-    plot_fold_change_with_colormap,
-    save_combined_publication_quality_plots,
-    get_output_directory,
-)
 from qPCR_pdf_layout import create_qpcr_summary_pdf, QPCRPDFReport
 
 ctk.set_appearance_mode("dark")
@@ -36,9 +30,11 @@ class qPCRAnalyzerApp(ctk.CTk, qPCRSummaryMixin):
     def __init__(self):
         super().__init__()
 
-        self.title("qPCR Analysis Suite v1.4.0 - Professional Edition")
-        self.geometry("1000x800")
-        self.configure(fg_color="#1A1A1A")
+        with open('config.json', 'r', encoding='utf-8') as f:
+            self.config = json.load(f)
+
+        self.title(f"qPCR Data Analyzer v{self.config['app_meta']['version']}")
+        self.geometry(f"{self.config['gui_settings']['window_size']['width']}x{self.config['gui_settings']['window_size']['height']}")
 
         # Storage for selected files and data
         self.target_file = None
@@ -49,6 +45,8 @@ class qPCRAnalyzerApp(ctk.CTk, qPCRSummaryMixin):
         self.fold_change_data = None
         self.stats_report = ""
         self.sample_name_var = ctk.StringVar(value="")
+        self._export_thread = None
+        self._export_result = None
 
         # --- Header ---
         self.header_label = ctk.CTkLabel(
@@ -283,10 +281,16 @@ class qPCRAnalyzerApp(ctk.CTk, qPCRSummaryMixin):
 ### Changed into qPCR_pdf_summary.py
 
     def update_status(self, message):
-        """Update status label"""
+        """Update status label safely from the GUI thread or a worker thread."""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self.progress_label.configure(text=f"Status: {message} ({timestamp})")
-        self.update()
+        if not self.winfo_exists():
+            return
+        if threading.current_thread() is threading.main_thread():
+            self.progress_label.configure(text=f"Status: {message} ({timestamp})")
+            self.update()
+        else:
+            self.after(0, lambda: self.progress_label.configure(text=f"Status: {message} ({timestamp})"))
+            self.after(0, self.update)
 
 
 if __name__ == "__main__":

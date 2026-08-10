@@ -1,3 +1,5 @@
+import os
+import re
 import pandas as pd
 import importlib
 
@@ -85,6 +87,58 @@ def load_qpcr_data(filepath, raw_sample_file=None):
     return df
 
 
+def parse_raw_plate_data(filepath):
+    """Parse the raw export from the qPCR instrument into well-level metadata."""
+    if not filepath or not os.path.exists(filepath):
+        return []
+
+    records = []
+    with open(filepath, 'r', encoding='utf-8') as f:
+        for line in f:
+            if not line.strip() or line.startswith('Experiment:') or line.startswith('Include'):
+                continue
+            fields = [field.strip() for field in line.split('\t')]
+            if len(fields) < 7:
+                continue
+
+            include = fields[0].lower() == 'true'
+            if not include:
+                continue
+
+            position = fields[2]
+            name = fields[3]
+            cp = fields[4]
+            concentration = fields[5] if fields[5] else None
+            status = fields[6] if len(fields) > 6 else ''
+            day_match = re.search(r'(D\d+)', name, flags=re.IGNORECASE)
+            day = day_match.group(1).upper() if day_match else 'Unknown'
+            day_number = int(re.search(r'(\d+)', day).group(1)) if day.startswith('D') else None
+
+            try:
+                cp_value = float(cp) if cp else None
+            except ValueError:
+                cp_value = None
+
+            try:
+                conc_value = float(concentration) if concentration else None
+            except ValueError:
+                conc_value = None
+
+            records.append({
+                'position': position,
+                'well': position,
+                'name': name,
+                'sample_name': name,
+                'cp': cp_value,
+                'concentration': conc_value,
+                'day': day,
+                'day_number': day_number,
+                'status': status,
+            })
+
+    return records
+
+
 def separate_genes(df):
     """
     Separate target and reference genes based on well positions.
@@ -117,6 +171,49 @@ def separate_genes(df):
     reference_df = reference_df.reset_index(drop=True)
     
     return target_df, reference_df
+
+
+def build_sample_key(row):
+    """Create a stable identifier for a sample across day and sample number."""
+    sample_number = row.get('Sample_Number')
+    day = str(row.get('Day') or '').strip()
+    sample_name = str(row.get('Sample_Name') or '').strip()
+
+    if pd.notna(sample_number):
+        return f"{day if day and day.lower() != 'unknown' else 'unknown'}|{sample_number}"
+    if sample_name:
+        return sample_name
+
+    well = row.get('Well1') or row.get('Target_Well') or row.get('Reference_Well') or row.get('Sample_Name')
+    return str(well or row.get('Samples') or '').strip()
+
+
+def make_well_raw_lookup(df, label='sample'):
+    """Build a per-well raw-data lookup from a loaded qPCR table."""
+    if df is None or df.empty:
+        return {}
+
+    lookup = {}
+    for _, row in df.iterrows():
+        well = row.get('Well1') or row.get('Samples')
+        if pd.isna(well) or not str(well).strip():
+            continue
+
+        sample_key = build_sample_key(row)
+        lookup[str(well).strip()] = {
+            'label': label,
+            'sample_key': sample_key,
+            'sample_number': int(row['Sample_Number']) if 'Sample_Number' in row and pd.notna(row.get('Sample_Number')) else None,
+            'well': str(well).strip(),
+            'sample_name': str(row.get('Sample_Name') or row.get('Samples') or str(well)).strip(),
+            'day': str(row.get('Day') or '').strip() or None,
+            'mean_cp': float(row.get('MeanCp')) if pd.notna(row.get('MeanCp')) else None,
+            'std_cp': float(row.get('STD_Cp')) if pd.notna(row.get('STD_Cp')) else None,
+            'mean_conc': float(row.get('Mean_conc')) if pd.notna(row.get('Mean_conc')) else None,
+            'std_conc': float(row.get('STD_conc')) if pd.notna(row.get('STD_conc')) else None,
+        }
+
+    return lookup
 
 
 def get_sample_groups(df):

@@ -101,7 +101,7 @@ class QPCRPDFReport(FPDF):
         self.set_xy(12, y_pos + card_h + 6)
 
 
-def create_qpcr_summary_pdf(delta_ct_df, fold_change_df, stats_report, output_path, sample_name=None, plot_paths=None, melting_plot=None, delta_ct_plot=None, fold_change_plot=None, grouped_boxplot=None):
+def create_qpcr_summary_pdf(delta_ct_df, fold_change_df, stats_report, output_path, sample_name=None, plot_paths=None, melting_plot=None, delta_ct_plot=None, fold_change_plot=None, grouped_boxplot=None, volcano_plot=None, violin_plot=None, raw_target_data=None, raw_reference_data=None):
     """Erstellt das qPCR-Zusammenfassungs-PDF."""
     pdf = QPCRPDFReport(sample_name=sample_name)
     pdf.alias_nb_pages()
@@ -210,46 +210,96 @@ def create_qpcr_summary_pdf(delta_ct_df, fold_change_df, stats_report, output_pa
         cleaned_stats = pdf.sanitize_text(stats_report)
         pdf.multi_cell(186, 3.8, cleaned_stats, border=1, align="L", fill=True)
 
-# Page 3: Plots & Visualisierungen
-    if delta_ct_plot or fold_change_plot or plot_paths or melting_plot or grouped_boxplot:
+# Raw target/reference data before plots
+    if raw_target_data is not None and not raw_target_data.empty:
         pdf.add_page()
-        pdf.section_title("4. Plots & Visualisierungen")
+        pdf.section_title("4. Raw Target Gene Data")
+        headers = ["Well", "Sample Name", "Cp", "Concentration"]
+        widths = [20, 75, 25, 35]
+        pdf.set_font("Helvetica", "B", 8.5)
+        pdf.set_fill_color(*pdf.c_primary)
+        pdf.set_text_color(255, 255, 255)
+        for h, w in zip(headers, widths):
+            pdf.cell(w, 6, pdf.sanitize_text(h), border=0, align="C", fill=True)
+        pdf.ln()
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(*pdf.c_text)
+        for _, row in raw_target_data.iterrows():
+            vals = [
+                str(row.get('Well1') or row.get('Well') or ''),
+                str(row.get('Sample_Name') or row.get('Samples') or ''),
+                f"{row.get('MeanCp', ''):.3f}" if pd.notnull(row.get('MeanCp')) else "N/A",
+                f"{row.get('Mean_conc', ''):.3f}" if pd.notnull(row.get('Mean_conc')) else "N/A",
+            ]
+            for v, w in zip(vals, widths):
+                pdf.cell(w, 5.5, pdf.sanitize_text(str(v)), border="B", align="C")
+            pdf.ln()
+
+    if raw_reference_data is not None and not raw_reference_data.empty:
+        pdf.ln(4)
+        pdf.section_title("5. Raw Reference Gene Data")
+        headers = ["Well", "Sample Name", "Cp", "Concentration"]
+        widths = [20, 75, 25, 35]
+        pdf.set_font("Helvetica", "B", 8.5)
+        pdf.set_fill_color(*pdf.c_primary)
+        pdf.set_text_color(255, 255, 255)
+        for h, w in zip(headers, widths):
+            pdf.cell(w, 6, pdf.sanitize_text(h), border=0, align="C", fill=True)
+        pdf.ln()
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(*pdf.c_text)
+        for _, row in raw_reference_data.iterrows():
+            vals = [
+                str(row.get('Well1') or row.get('Well') or ''),
+                str(row.get('Sample_Name') or row.get('Samples') or ''),
+                f"{row.get('MeanCp', ''):.3f}" if pd.notnull(row.get('MeanCp')) else "N/A",
+                f"{row.get('Mean_conc', ''):.3f}" if pd.notnull(row.get('Mean_conc')) else "N/A",
+            ]
+            for v, w in zip(vals, widths):
+                pdf.cell(w, 5.5, pdf.sanitize_text(str(v)), border="B", align="C")
+            pdf.ln()
+
+    # Page 3: Plots & Visualisierungen
+    if delta_ct_plot or fold_change_plot or plot_paths or melting_plot or grouped_boxplot or volcano_plot or violin_plot:
+        pdf.add_page()
+        pdf.section_title("6. Plots & Visualisierungen")
+
+        def add_plot_block(title, image_path):
+            if not image_path or not os.path.exists(image_path):
+                return
+            if pdf.get_y() > 180:
+                pdf.add_page()
+            pdf.set_font("Helvetica", "B", 11)
+            pdf.set_text_color(*pdf.c_primary)
+            pdf.cell(0, 8, title, ln=True)
+            pdf.image(str(image_path), w=170)
+            pdf.ln(8)
         
         # Falls plot_paths noch genutzt wird (z.B. für ältere Aufrufe)
         if plot_paths:
             for p_path in plot_paths:
                 if p_path and os.path.exists(p_path):
-                    pdf.image(str(p_path), w=170)
-                    pdf.ln(5)
+                    add_plot_block("Additional Plot", p_path)
 
         # 1. Delta Ct Plot
-        if delta_ct_plot and os.path.exists(delta_ct_plot):
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.set_text_color(*pdf.c_primary)
-            pdf.cell(0, 8, "Delta Ct Distribution", ln=True)
-            pdf.image(str(delta_ct_plot), w=170)
-            pdf.ln(8)
+        add_plot_block("Delta Ct Distribution", delta_ct_plot)
 
         # 2. Fold Change Plot
-        if fold_change_plot and os.path.exists(fold_change_plot):
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.set_text_color(*pdf.c_primary)
-            pdf.cell(0, 8, "Fold Change Analysis", ln=True)
-            pdf.image(str(fold_change_plot), w=170)
-            pdf.ln(8)
+        add_plot_block("Fold Change Analysis", fold_change_plot)
 
         # 3. Grouped Boxplot
-        if grouped_boxplot and os.path.exists(grouped_boxplot):
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.set_text_color(*pdf.c_primary)
-            pdf.cell(0, 8, "Grouped Delta Ct Boxplot (by Day)", ln=True)
-            pdf.image(str(grouped_boxplot), w=170)
-            pdf.ln(8)
+        add_plot_block("Grouped Delta Ct Boxplot (by Day)", grouped_boxplot)
+
+        # 4. Volcano Plot
+        add_plot_block("Volcano Plot", volcano_plot)
+
+        # 5. Violin Plot
+        add_plot_block("Violin Plot", violin_plot)
 
     # Page 4: Schmelzkurve (auf neuer Seite für mehr Platz)
     if melting_plot and os.path.exists(melting_plot):
         pdf.add_page()
-        pdf.section_title("5. Melting Curve Analysis")
+        pdf.section_title("7. Melting Curve Analysis")
         
         pdf.set_font("Helvetica", "", 9)
         pdf.set_text_color(100, 100, 100)

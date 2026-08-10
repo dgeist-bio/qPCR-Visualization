@@ -14,7 +14,7 @@ from pathlib import Path
 # Import the data loader module
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
-from qPCR_data_loader import load_qpcr_data, separate_genes, get_sample_groups
+from qPCR_data_loader import load_qpcr_data, separate_genes, get_sample_groups, build_sample_key
 
 
 def calculate_delta_ct(target_df, reference_df):
@@ -41,25 +41,54 @@ def calculate_delta_ct(target_df, reference_df):
         target_df['Sample_Number'] = target_df['Well1'].str.extract(r'(\d+)$')[0].astype(int)
     if 'Sample_Number' not in reference_df:
         reference_df['Sample_Number'] = reference_df['Well1'].str.extract(r'(\d+)$')[0].astype(int)
-    
-    target_df = target_df.sort_values('Sample_Number').reset_index(drop=True)
-    reference_df = reference_df.sort_values('Sample_Number').reset_index(drop=True)
 
-    n = min(len(target_df), len(reference_df))
-    if n == 0:
-        return pd.DataFrame(columns=['Sample_Number', 'Sample_Name', 'Day', 'Target_Ct', 'Reference_Ct', 'Target_STD', 'Reference_STD', 'Delta_Ct', 'Delta_Ct_STD'])
+    if 'Day' not in target_df:
+        target_df['Day'] = target_df.get('Sample_Name', '').str.extract(r'^(D[12])', expand=False).fillna('Unknown')
+    if 'Day' not in reference_df:
+        reference_df['Day'] = reference_df.get('Sample_Name', '').str.extract(r'^(D[12])', expand=False).fillna('Unknown')
 
-    target_df = target_df.iloc[:n].copy()
-    reference_df = reference_df.iloc[:n].copy()
-    
+    target_df['Sample_Key'] = target_df.apply(build_sample_key, axis=1)
+    reference_df['Sample_Key'] = reference_df.apply(build_sample_key, axis=1)
+
+    # Setzen Sie einen positionsbasierten Index für beide DataFrames, 
+    # damit Zeile 1, 2, 3... exakt aufeinander gemappt werden:
+    target_df = target_df.reset_index(drop=True)
+    reference_df = reference_df.reset_index(drop=True)
+    target_df['Row_Index'] = target_df.index
+    reference_df['Row_Index'] = reference_df.index
+
+    if target_df.empty or reference_df.empty:
+        return pd.DataFrame(columns=['Sample_Number', 'Sample_Name', 'Day', 'Target_Ct', 'Reference_Ct', 'Target_STD', 'Reference_STD', 'Delta_Ct', 'Delta_Ct_STD', 'Target_Well', 'Reference_Well'])
+
+    target_df = target_df.rename(columns={
+        'MeanCp': 'Target_Ct',
+        'STD_Cp': 'Target_STD',
+        'Well1': 'Target_Well',
+        'Sample_Name': 'Target_Sample_Name',
+    })
+    reference_df = reference_df.rename(columns={
+        'MeanCp': 'Reference_Ct',
+        'STD_Cp': 'Reference_STD',
+        'Well1': 'Reference_Well',
+        'Sample_Name': 'Reference_Sample_Name',
+    })
+
+    merged = target_df.merge(
+        reference_df[['Row_Index', 'Reference_Ct', 'Reference_STD', 'Reference_Well', 'Reference_Sample_Name']],
+        on='Row_Index',
+        how='inner'
+    )
+
     delta_ct_df = pd.DataFrame({
-        'Sample_Number': target_df['Sample_Number'],
-        'Sample_Name': target_df.get('Sample_Name', target_df['Well1'] + '_' + target_df['Well2']),
-        'Day': target_df.get('Day', target_df['Sample_Name'].str.extract(r'^(D[12])', expand=False).fillna('Unknown')),
-        'Target_Ct': target_df['MeanCp'].values,
-        'Reference_Ct': reference_df['MeanCp'].values,
-        'Target_STD': target_df['STD_Cp'].values,
-        'Reference_STD': reference_df['STD_Cp'].values,
+        'Sample_Number': merged['Sample_Number'],
+        'Sample_Name': merged['Target_Sample_Name'].fillna(merged['Reference_Sample_Name']).fillna('Unknown'),
+        'Day': merged.get('Day', pd.Series('Unknown', index=merged.index)),
+        'Target_Ct': merged['Target_Ct'],
+        'Reference_Ct': merged['Reference_Ct'],
+        'Target_STD': merged['Target_STD'],
+        'Reference_STD': merged['Reference_STD'],
+        'Target_Well': merged['Target_Well'],
+        'Reference_Well': merged['Reference_Well'],
     })
     
     valid = (delta_ct_df['Target_Ct'] > 0) & (delta_ct_df['Reference_Ct'] > 0)
